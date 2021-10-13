@@ -5,10 +5,12 @@ import scipy as sp
 from scipy import signal
 from scipy import stats
 import matplotlib.pyplot as plt
+from matplotlib import cm
 
-# h5_path='D:/Dropbox/analysis/sgrating/sgrating_prelim_data.h5'
-h5_path='D:/Dropbox/analysis/sgrating/hb_20201008.h5'
-
+# h5_path='D:/Dropbox/analysis/sgrating/sgrating_prelim_data2.h5'
+# date = 'hb_20201230'
+h5_path='D:/Dropbox/analysis/sgrating/sgrating_prelim_data_3.0.h5'
+date = 'hb_20201008'
 
 def h5_read(f):
     cur_dict = dict()
@@ -27,24 +29,36 @@ def h5_read(f):
 
 
 with h5py.File(h5_path, 'r') as f:
-    data = h5_read(f)
+    data_all = h5_read(f)
+data = data_all[date]
+
+data['trial_info'] = pd.DataFrame.from_dict(data['trial_info'])
+data['spk'] = data['spk'][data['trial_info']['st2_acquired']<data['ts'][-1]]
+data['trial_info'] = data['trial_info'][data['trial_info']['st2_acquired'] < data['ts'][-1]]
+data['trial_info'] = data['trial_info'].reset_index()
+data['spk'] = data['spk'] * 1000
 
 time_win_plot = [-300, 700]
 ts_plot = np.arange(time_win_plot[0], time_win_plot[1], 1)
 
-
-def realign(times, time_win=time_win_plot, data_spk=data['spk'], ts=data['ts']):
+def realign(times, data_spk, time_win=None):
+    ts = data_all[tuple(data_all.keys())[0]]['ts']
+    if time_win is None:
+        time_win = time_win_plot
     new_data = []
     for i in range(data_spk.shape[0]):
-        data_in_range = data_spk[i, (ts >= times[i]+time_win[0]) & (ts < times[i]+time_win[1])]
-        if ts[0] > (times[i]+time_win[0]):
-            data_in_range = np.concatenate((np.ones((int(ts[0]-(times[i]+time_win[0])-1), data_in_range.shape[1]))*np.nan, data_in_range))
-        if ts[-1] < (times[i]+time_win[1]):
-            data_in_range = np.concatenate((data_in_range, np.ones((int(times[i]+time_win[1]-ts[-1]-1), data_in_range.shape[1]))*np.nan))
+        data_in_range = data_spk[i, (ts >= times[i] + time_win[0]) & (ts < times[i] + time_win[1])]
+        if ts[0] > (times[i] + time_win[0]):
+            data_in_range = np.concatenate((np.ones(
+                (int(ts[0] - (times[i] + time_win[0]) - 1), data_in_range.shape[1])) * np.nan, data_in_range))
+        if ts[-1] < (times[i] + time_win[1]):
+            data_in_range = np.concatenate((data_in_range, np.ones(
+                (int(times[i] + time_win[1] - ts[-1] - 1), data_in_range.shape[1])) * np.nan))
+        if data_in_range.shape[0] > time_win_plot[1] - time_win_plot[0]:
+            data_in_range = data_in_range[:(time_win_plot[1] - time_win_plot[0])]
 
         new_data.append(data_in_range)
     return np.stack(new_data)
-
 
 def select_visual_unit(data, ts, time_win_1, time_win_2):
     selected = []
@@ -59,25 +73,10 @@ def select_visual_unit(data, ts, time_win_1, time_win_2):
     return selected
 
 
-data['trial_info'] = pd.DataFrame.from_dict(data['trial_info'])
-data['spk'] = data['spk'] * 1000
+data['st1_units'] = select_visual_unit(realign(data['trial_info']['st1_on'], data['spk']), ts_plot, [-50, 50], [50, 150])
+data['fovea_units'] = select_visual_unit(realign(data['trial_info']['st1_acquired'], data['spk']), ts_plot, [-50, 50], [50, 150])
+data['peripheral_units'] = data['st1_units'] * (~data['fovea_units'])
 
-##
-# Plot PSTH for the whole trial
-
-def plot_varied_times(ax, times):
-    left = np.mean(times) - np.std(times)
-    right = np.mean(times) + np.std(times)
-    plt.fill_betweenx(ax.get_ylim(), left, right, alpha=0.4)
-
-
-plt.figure()
-ax = plt.gca()
-plt.plot(data['ts'], data['spk'].mean(axis=(0, 2)))
-plot_varied_times(ax, data['trial_info']['st1_on'])
-plot_varied_times(ax, data['trial_info']['st1_acquired'])
-plot_varied_times(ax, data['trial_info']['st2_acquired'])
-##
 # PSTH realigned to different events
 
 def SmoothTrace(data, sk_std=None, fs=1.0, ts=None, axis=1):
@@ -99,25 +98,38 @@ def SmoothTrace(data, sk_std=None, fs=1.0, ts=None, axis=1):
     return data_smooth
 
 
-to_plot = ['st1_on', 'st1_acquired', 'st2_on', 'st2_acquired']
-plt.figure()
-selected_units = select_visual_unit(realign(data['trial_info']['st1_on']), ts_plot, [-300,0], [100,400])
-for i in range(4):
-    plt.subplot(2, 2, i+1)
+to_plot = ['st1_on', 'st1_acquired', 'st2_acquired']
+h_fig, h_ax = plt.subplots(1, 3, sharey=True)
+h_ax = h_ax.flatten()
+selected_units = data['peripheral_units']
+for i in range(3):
+    plt.axes(h_ax[i])
     spk_realigned = realign(data['trial_info'][to_plot[i]], data_spk=data['spk'][:,:,selected_units])
     plt.plot(ts_plot, SmoothTrace(np.nanmean(spk_realigned, axis=0), sk_std=5, ts=ts_plot, axis=0))
+    plt.plot(ts_plot, SmoothTrace(np.nanmean(spk_realigned, axis=(0,2)), sk_std=5, ts=ts_plot, axis=0), color='black', linewidth=4)
     plt.title(to_plot[i])
     plt.axvline(0)
+    plt.xlabel('Time (ms)')
+    plt.ylabel('Firing rate (Hz)')
+
+plt.figure()
+spk_realigned = realign(data['trial_info']['st1_on'], data_spk=data['spk'][:,:,selected_units])
+plt.plot(ts_plot, SmoothTrace(np.nanmean(spk_realigned, axis=(0,2)), sk_std=5, ts=ts_plot, axis=0), label='Before foveation')
+spk_realigned = realign(data['trial_info']['st2_acquired'], data_spk=data['spk'][:,:,selected_units])
+plt.plot(ts_plot, SmoothTrace(np.nanmean(spk_realigned, axis=(0,2)), sk_std=5, ts=ts_plot, axis=0), label='After foveation')
+plt.legend()
+plt.xlabel('Time (ms)')
+plt.ylabel('Firing rate (Hz)')
 ##
 # Orientation/sfreq selectivity
 time_win_plot = [-300, 700]
 ts_plot = np.arange(time_win_plot[0], time_win_plot[1], 1)
-st1_units = select_visual_unit(realign(data['trial_info']['st1_on']), ts_plot, [-300,0], [100,400])
-fovea_units = select_visual_unit(realign(data['trial_info']['st1_acquired']), ts_plot, [-300,0], [100,400])
+st1_units = select_visual_unit(realign(data['trial_info']['st1_on'], data_spk=data['spk']), ts_plot, [-300,0], [100,400])
+fovea_units = select_visual_unit(realign(data['trial_info']['st1_acquired'], data_spk=data['spk']), ts_plot, [-300,0], [100,400])
 
 
 def analyse_tuning(epoch, time_win_calculate=[50, 550], selected_units=st1_units, plot=False):
-    spk_realigned = realign(data['trial_info'][epoch], time_win_plot, data_spk=data['spk'][:,:,selected_units])
+    spk_realigned = realign(data['trial_info'][epoch], data_spk=data['spk'][:,:,selected_units])
     fr_all = np.nanmean(spk_realigned[:, (ts_plot>=time_win_calculate[0]) & (ts_plot<time_win_calculate[1])], axis=1)
 
     orientations = np.unique(data['trial_info']['st1_orientation'])
@@ -182,3 +194,100 @@ h_ax[1, 1].set_aspect('equal')
 plt.axis('square')
 plt.xlabel('F value (Before foveal view, early)')
 plt.ylabel('F value (Before foveal view, late)')
+
+
+##
+def get_fr_by_conds(data, epoch, time_win_calculate, selected_units=None, avg_trials=True):
+    if selected_units is None:
+        selected_units = np.ones(data['spk'].shape[2])>0
+    else:
+        selected_units = data[selected_units]
+    spk_realigned = realign(data['trial_info'][epoch], data_spk=data['spk'][:,:,selected_units])
+    fr_all = np.nanmean(spk_realigned[:, (ts_plot>=time_win_calculate[0]) & (ts_plot<time_win_calculate[1])], axis=1)
+
+    sfreqs = data['trial_info']['st1_sfreq'] + 0
+    sfreqs_unique = np.unique(sfreqs)
+    orientations = data['trial_info']['st1_orientation'] + 0
+    # orientations_unique = np.unique(orientations)
+    # orientations[orientations==orientations_unique[2]] = orientations_unique[0]
+    # orientations[orientations==orientations_unique[3]] = orientations_unique[1]
+    orientations_unique = np.unique(orientations)
+    fr_by_conds = []
+    if avg_trials:
+        for i in range(len(sfreqs_unique)):
+            data_i = []
+            for j in range(len(orientations_unique)):
+                trials = (orientations==orientations_unique[j]) & (data['trial_info']['st1_sfreq']==sfreqs_unique[i])
+                data_i.append(np.nanmean(fr_all[trials], axis=0))
+            fr_by_conds.append(np.stack(data_i, axis=0))
+        fr_by_conds = np.stack(fr_by_conds, axis=0)
+    else:
+        for i in range(len(sfreqs_unique)):
+            data_i = []
+            for j in range(len(orientations_unique)):
+                trials = (orientations==orientations_unique[j]) & (data['trial_info']['st1_sfreq']==sfreqs_unique[i])
+                selected_fr = fr_all[trials]
+                data_i.append(selected_fr[(np.isnan(selected_fr).sum(axis=1))==0, :])
+            fr_by_conds.append(data_i)
+
+    return fr_by_conds
+
+## PCA state space
+from sklearn.decomposition import PCA
+fr_by_conds = get_fr_by_conds(data, 'st1_on', [50,550], 'peripheral_units')
+data_pca_1 = fr_by_conds.mean(axis=0)  # Orientation
+data_pca_2 = fr_by_conds.mean(axis=1)  # Sfreq
+pca_1 = PCA(n_components=1, whiten=True)
+pca_1.fit(data_pca_1)
+pca_2 = PCA(n_components=1, whiten=True)
+pca_2.fit(data_pca_2)
+
+step_size = 10
+window_size = 200
+n_steps = 50
+step_centers = np.arange(n_steps)*step_size
+colors = cm.get_cmap('rainbow')
+
+h_fig, h_ax = plt.subplots(2, 2, figsize=[15,15])
+plt.axes(h_ax[0, 0])
+ts_psth = np.arange(step_centers[0]-window_size/2, step_centers[-1]+window_size/2)
+spk_realigned = realign(data['trial_info']['st1_on'], data_spk=data['spk'][:,:,selected_units], time_win=[step_centers[0]-window_size/2, step_centers[-1]+window_size/2])
+plt.plot(ts_psth, SmoothTrace(np.nanmean(spk_realigned, axis=0), sk_std=5, ts=ts_plot, axis=0))
+plt.plot(ts_psth, SmoothTrace(np.nanmean(spk_realigned, axis=(0,2)), sk_std=5, ts=ts_plot, axis=0), color='black', linewidth=4)
+vline1 = plt.axvline(step_centers[0], color='y', linewidth=4)
+plt.axes(h_ax[0, 1])
+ts_psth = np.arange(step_centers[0]-window_size/2, step_centers[-1]+window_size/2)
+spk_realigned = realign(data['trial_info']['st2_acquired'], data_spk=data['spk'][:,:,selected_units], time_win=[step_centers[0]-window_size/2, step_centers[-1]+window_size/2])
+plt.plot(ts_psth, SmoothTrace(np.nanmean(spk_realigned, axis=0), sk_std=5, ts=ts_plot, axis=0))
+plt.plot(ts_psth, SmoothTrace(np.nanmean(spk_realigned, axis=(0,2)), sk_std=5, ts=ts_plot, axis=0), color='black', linewidth=4)
+vline2 = plt.axvline(step_centers[0], color='y', linewidth=4)
+
+for t in range(n_steps):
+    plt.axes(h_ax[0, 0])
+    vline1.set_xdata([step_centers[t], step_centers[t]])
+    plt.axes(h_ax[0, 1])
+    vline2.set_xdata([step_centers[t], step_centers[t]])
+
+    plt.axes(h_ax[1, 0])
+    plt.cla()
+    data_to_plot = get_fr_by_conds(data, 'st1_on', [step_centers[t]-window_size/2, step_centers[t]+window_size/2], 'peripheral_units', False)
+    for i in range(len(data_to_plot)):  # sfreq
+        for j in range(len(data_to_plot[0])):  # orientation
+            transformed_1 = pca_1.transform(data_to_plot[i][j])
+            transformed_2 = pca_2.transform(data_to_plot[i][j])
+            plt.scatter(transformed_1, transformed_2, color=colors((i*len(data_to_plot[0])+j)/len(data_to_plot)/len(data_to_plot[0])))
+    plt.xlim([-15, 15])
+    plt.ylim([-15, 15])
+
+    plt.axes(h_ax[1, 1])
+    plt.cla()
+    data_to_plot = get_fr_by_conds(data, 'st2_acquired', [step_centers[t]-window_size/2, step_centers[t]+window_size/2], 'peripheral_units', False)
+    for i in range(len(data_to_plot)):  # sfreq
+        for j in range(len(data_to_plot[0])):  # orientation
+            transformed_1 = pca_1.transform(data_to_plot[i][j])
+            transformed_2 = pca_2.transform(data_to_plot[i][j])
+            plt.scatter(transformed_1, transformed_2, color=colors((i*len(data_to_plot[0])+j)/len(data_to_plot)/len(data_to_plot[0])))
+    plt.xlim([-15, 15])
+    plt.ylim([-15, 15])
+    plt.draw()
+    plt.pause(0.2)
