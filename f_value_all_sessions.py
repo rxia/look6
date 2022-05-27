@@ -12,8 +12,9 @@ from sklearn.svm import SVC
 from sklearn.model_selection import cross_val_score
 
 # h5_path = 'D:/Dropbox/analysis/sgrating/sgrating_prelim_data2.h5'
-h5_path = 'D:/Dropbox/analysis/sgrating/sgrating_prelim_data_3.0.h5'
-
+# h5_path = 'D:/Dropbox/analysis/sgrating/sgrating_prelim_data_3.0.h5'
+# h5_path='./data/tg_data_MT_transsac.h5'
+h5_path = ['D:/Dropbox/analysis/sgrating/sgrating_prelim_data2.h5', 'D:/Dropbox/analysis/sgrating/sgrating_prelim_data_3.0.h5']
 
 def h5_read(f):
     cur_dict = dict()
@@ -30,16 +31,22 @@ def h5_read(f):
 
     return cur_dict
 
-
-with h5py.File(h5_path, 'r') as f:
-    data_all = h5_read(f)
+data_all = dict()
+if type(h5_path) is list:
+    f_list = h5_path
+else:
+    f_list = [h5_path]
+for f_path in f_list:
+    print(f_path)
+    with h5py.File(f_path, 'r') as f:
+        data_i = h5_read(f)
+    for key in data_i.keys():
+        data_all[key] = data_i[key]
 
 time_win_plot = [-300, 700]
 ts_plot = np.arange(time_win_plot[0], time_win_plot[1], 1)
 
-
-def realign(times, data_spk):
-    ts = data_all[tuple(data_all.keys())[0]]['ts']
+def realign(times, data_spk, ts=data_all[tuple(data_all.keys())[0]]['ts']):
     time_win = time_win_plot
     new_data = []
     for i in range(data_spk.shape[0]):
@@ -76,7 +83,7 @@ def get_tuning(data, epoch, time_win_calculate, selected_units=None, selected_sf
     elif isinstance(selected_units, str):
         selected_units = data[selected_units]
 
-    spk_realigned = realign(data['trial_info'][epoch], data_spk=data['spk'][:,:,selected_units])
+    spk_realigned = realign(data['trial_info'][epoch], data_spk=data['spk'][:,:,selected_units], ts=data['ts'])
     fr_all = np.nanmean(spk_realigned[:, (ts_plot>=time_win_calculate[0]) & (ts_plot<time_win_calculate[1])], axis=1)
     # fr_all = np.nanmean(spk_realigned[:, (ts_plot>=time_win_calculate[0]) & (ts_plot<time_win_calculate[1])], axis=1) - np.nanmean(spk_realigned[:, (ts_plot>=-300) & (ts_plot<0)], axis=1)
 
@@ -139,16 +146,29 @@ def decoding(data_list, method='SVM_population'):
 
 
 for i, date in enumerate(data_all.keys()):
+    if 'edata_st1_on' in data_all[date]['trial_info'].keys():
+        selected_trials = ~np.isnan(data_all[date]['trial_info']['edata_st2_maintained'])
+        data_all[date]['trial_info_temp'] = dict()
+        data_all[date]['trial_info_temp']['st1_acquired'] = (data_all[date]['trial_info']['edata_st1_acquired'][selected_trials]-data_all[date]['trial_info']['edata_fixation_stable'][selected_trials])*1000
+        data_all[date]['trial_info_temp']['st1_on'] = (data_all[date]['trial_info']['edata_st1_on'][selected_trials]-data_all[date]['trial_info']['edata_fixation_stable'][selected_trials])*1000
+        data_all[date]['trial_info_temp']['st1_orientation'] = data_all[date]['trial_info']['esetup_st1_orientation'][selected_trials]
+        data_all[date]['trial_info_temp']['st1_sfreq'] = data_all[date]['trial_info']['esetup_st1_sfreq'][selected_trials]
+        data_all[date]['trial_info_temp']['st2_acquired'] = (data_all[date]['trial_info']['edata_st2_acquired'][selected_trials]-data_all[date]['trial_info']['edata_fixation_stable'][selected_trials])*1000
+        data_all[date]['trial_info'] = data_all[date]['trial_info_temp']
+        data_all[date]['spk'] = data_all[date]['spk'][selected_trials,:,:]
     data_all[date]['trial_info'] = pd.DataFrame.from_dict(data_all[date]['trial_info'])
-    data_all[date]['spk'] = data_all[date]['spk'] * 1000
-    data_all[date]['st1_units'] = select_visual_unit(realign(data_all[date]['trial_info']['st1_on'], data_all[date]['spk']), ts_plot, [-150, 50], [50, 250])
-    data_all[date]['fovea_units'] = select_visual_unit(realign(data_all[date]['trial_info']['st1_acquired'], data_all[date]['spk']), ts_plot, [-50, 50], [50, 150])
+    if data_all[date]['ts'].max() < 100:
+        data_all[date]['ts'] = data_all[date]['ts'] * 1000
+    if data_all[date]['spk'].mean() < 0.1:
+        data_all[date]['spk'] = data_all[date]['spk'] * 1000
+    data_all[date]['st1_units'] = select_visual_unit(realign(data_all[date]['trial_info']['st1_on'], data_all[date]['spk'], ts=data_all[date]['ts']), ts_plot, [-150, 50], [50, 250])
+    data_all[date]['fovea_units'] = select_visual_unit(realign(data_all[date]['trial_info']['st1_acquired'], data_all[date]['spk'], ts=data_all[date]['ts']), ts_plot, [-50, 50], [50, 150])
     data_all[date]['peripheral_units'] = data_all[date]['st1_units'] * (~data_all[date]['fovea_units'])
-
+##
 x, y = [], []
-parameters_x, parameters_y = ['st1_on', [50,550], 'st1_units', 'all'], ['st2_acquired', [50,550], 'st1_units', 'all']
+parameters_x, parameters_y = ['st1_on', [300,500], 'st1_units', 'all'], ['st2_acquired', [300,500], 'st1_units', 'all']
 # date = 'hb_20201008'
-for i, date in enumerate(data_all.keys()):
+for i, date in enumerate(tuple(data_all.keys())[-1]):
     print((i, date))
     data = data_all[date]
     tuning_x = get_tuning(data, *parameters_x)
@@ -166,8 +186,8 @@ for i, date in enumerate(data_all.keys()):
 plt.figure()
 # plt.violinplot(x)
 means_x, ses_x, means_y, ses_y = np.zeros(len(x)), np.zeros(len(x)), np.zeros(len(y)), np.zeros(len(y))
-selected_units = (x[0]>2) | (x[1]>2) | (x[2]>2) | (x[3]>2)
-# selected_units = np.ones(len(x[0]))>0
+f_value_threshold = 2
+selected_units = (x[0]>f_value_threshold) | (x[1]>f_value_threshold) | (x[2]>f_value_threshold) | (x[3]>f_value_threshold)
 for i in range(len(x)):
     means_x[i], ses_x[i] = x[i][selected_units].mean(), x[i][selected_units].std()/np.sqrt(selected_units.sum())
     means_y[i], ses_y[i] = y[i][selected_units].mean(), y[i][selected_units].std()/np.sqrt(selected_units.sum())
@@ -207,8 +227,8 @@ for i, date in enumerate(data_all.keys()):
     data['trial_info'] = pd.DataFrame.from_dict(data['trial_info'])
     data['spk'] = data['spk'] * 1000
 
-    st1_units = select_visual_unit(realign(data['trial_info']['st1_on'], data['spk']), ts_plot, [-50, 50], [50, 150])
-    fovea_units = select_visual_unit(realign(data['trial_info']['st1_acquired'], data['spk']), ts_plot, [-50, 50], [50, 150])
+    st1_units = select_visual_unit(realign(data['trial_info']['st1_on'], data['spk'], ts=data['ts']), ts_plot, [-50, 50], [50, 150])
+    fovea_units = select_visual_unit(realign(data['trial_info']['st1_acquired'], data['spk'], ts=data['ts']), ts_plot, [-50, 50], [50, 150])
 
     F_before = np.concatenate([F_before, get_information(get_tuning('st1_on', data, [50,550], st1_units))])
     F_after = np.concatenate([F_after, get_information(get_tuning('st2_acquired', data, [50,550], st1_units, [j]))])
