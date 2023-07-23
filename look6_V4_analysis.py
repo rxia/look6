@@ -36,7 +36,8 @@ def load_data_1_session(h5_path, session, do_not_load=['lfp']):
     return data
 
 
-h5_path='D:/Dropbox/analysis/donatas_data/look6_V4_data.h5'
+# h5_path='D:/Dropbox/analysis/donatas_data/look6_V4_data.h5'
+h5_path='D:/Analysis/look6/data/V4_delay.h5'
 with h5py.File(h5_path, 'r') as f:
     sessions = list(f.keys())
 data = load_data_1_session(h5_path, sessions[0])
@@ -44,9 +45,9 @@ time_win_plot = [-600, 700]
 ts_plot = np.arange(time_win_plot[0], time_win_plot[1], 1)
 
 
-with h5py.File(h5_path, 'r+') as f:
-    sessions = list(f.keys())
-    del f['hb_20180216_1']['lfp']
+# with h5py.File(h5_path, 'r+') as f:
+#     sessions = list(f.keys())
+#     del f['hb_20180216_1']['lfp']
 
 
 ##
